@@ -3,8 +3,12 @@ using System.Collections;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Sirenix.Utilities;
+using TCGStarter.Tweening;
+using TSoft.Data.Registry;
 using TSoft.InGame.CardSystem;
+using TSoft.InGame.CardSystem.CE;
 using TSoft.InGame.GamePlaySystem;
+using TSoft.Utils;
 using UnityEngine;
 
 namespace TSoft.InGame.Player
@@ -15,28 +19,27 @@ namespace TSoft.InGame.Player
    
         [Header("Positions")]
         [SerializeField] private Transform hand;
-        [SerializeField] private Transform cardPreview;
         [SerializeField] private Transform deck;
         
         private Gameplay gameplay;
+        private AbilityContainer abilityContainer;
         
-        //animation
         private Vector3[] cardPositions;
-        private int currentCardPreviewIdx;
-        
+        private Vector3[] cardRotations;
+    
         //cards
         [SerializeField]
         private List<PokerCard> cardsOnHand;
         private List<PokerCard> currentPokerCardSelected;
         
-        private PokerCard currentPokerCardPreview;
-        private PokerCard currentPokerCardHold;
+        private Queue<CustomEffect> customEffects_joker;
         
         public bool CanMoveNextCycle { get; set; }
-       
-        public List<PokerCard> CardsOnHand => cardsOnHand;
         
+        public AbilityContainer AbilityContainer => abilityContainer;
         public Gameplay Gameplay =>  gameplay;
+        
+        public float CurrentDmg { get; set; }
         
         private const int HandCountMax = 5;
         
@@ -44,25 +47,60 @@ namespace TSoft.InGame.Player
         {
             currentPokerCardSelected = new List<PokerCard>();
             cardsOnHand = new List<PokerCard>();
+            customEffects_joker = new Queue<CustomEffect>();
 
             gameplay = GetComponent<Gameplay>();
+            abilityContainer = GetComponent<AbilityContainer>();
+
+            gameplay.Init();
+            abilityContainer.Init();
+            
+            LoadSaveItems();
         }
 
-        protected override async UniTask OnGameReady()
+        protected override async UniTask OnPrePlay()
         {
             InitializeDeck();
-            gameplay.Init();
-            
+            InitPattern();
             onGameReady?.Invoke();
             
             await UniTask.WaitForSeconds(1);
         }
         
-        protected override async UniTask OnGameFinishSuccess()
+        protected override async UniTask OnPostPlaySuccess()
         {
             await UniTask.WaitForSeconds(2);
             await UniTask.WaitWhile(() => !CanMoveNextCycle);
+            
             DiscardAll();
+        }
+
+        private void LoadSaveItems()
+        {
+            var artifactRegistryIds = DataRegistry.Instance.ArtifactRegistry.Ids;
+            var jokerRegistryIds = DataRegistry.Instance.JokerRegistry.Ids;
+            
+            foreach (var id in artifactRegistryIds)
+            {
+                if (!GameSave.Instance.HasItemsId(id.Guid))
+                {
+                    continue;
+                }
+
+                var artifact = DataRegistry.Instance.ArtifactRegistry.Get(id);
+                abilityContainer.currentArtifacts.Add(artifact);
+            }
+
+            foreach (var id in jokerRegistryIds)
+            {
+                if (!GameSave.Instance.HasItemsId(id.Guid))
+                {
+                    continue;
+                }
+                
+                var joker = DataRegistry.Instance.JokerRegistry.Get(id);
+                specialCardDB.Add(joker);
+            }
         }
         
         public bool TryUseCardsOnHand()
@@ -71,33 +109,44 @@ namespace TSoft.InGame.Player
             if (currentHeart <= 0)
                 return false;
 
+            //손에 들고 있는 카드가 없다면 false
             if (currentPokerCardSelected.IsNullOrEmpty())
                 return false;
             
+            //하트는 먼저 깎아준다.
             --currentHeart;
-            Debug.Log("remaining heart : " + currentHeart);
-            
             gameplay.SetAttr(GameplayAttr.Heart, currentHeart);
-
-            //현재 데미지 상태
-            var damage = gameplay.GetAttr(GameplayAttr.BasicAttackPower);
-            Debug.Log("damage dealt : " + damage);
             
+            //기본 데미지 적용
+            CurrentDmg = gameplay.GetAttr(GameplayAttr.BasicAttackPower);
+            
+            //카드 패턴에 의한 데미지 추가
+            var currentDamageModifier = CurrentPattern.Modifier;
+            
+            //조커 이팩트 적용
+            //단일 적용
+            while (customEffects_joker.Count > 0)
+            {
+                var ce = customEffects_joker.Dequeue();
+                ce.ApplyEffect(this, director.CurrentMonster);
+            }
+            
+            //스킬 실행 및 적용
+            CurrentDmg *= currentDamageModifier;
+            
+            currentPattern.skill.PlaySkill(this, director.CurrentMonster);
+            
+            //카드 삭제
             foreach (var selectedCard in currentPokerCardSelected)
             {
                 selectedCard.Dissolve(animationSpeed);
-                
+                        
                 Discard(selectedCard);
             }
-            
+
             currentPokerCardSelected.Clear();
             
-            //카드 패턴에 의한 데미지 추가
-            damage *= CurrentPattern.Modifier;
-
-            var isDead = director.CurrentField.TakeDamage((int)damage);
-            
-            if (isDead)
+            if (director.CurrentMonster.IsDead)
             {
                 if (currentHeart > 0)
                 {
@@ -107,7 +156,7 @@ namespace TSoft.InGame.Player
             }
             else
             {
-                if (currentHeart <= 0)
+                if (currentHeart <= 0 || cardsOnHand.Count <= 0)
                 {
                     director.GameOver(false);
                     return false;
@@ -123,15 +172,15 @@ namespace TSoft.InGame.Player
             if(currentEnergy <= 0)
                 return false;
             
+            --currentEnergy;
+            gameplay.SetAttr(GameplayAttr.Energy, currentEnergy);
+            
             foreach (var card in currentPokerCardSelected)
             {
                 Discard(card);
             }
             
             currentPokerCardSelected.Clear();
-            
-            --currentEnergy;
-            gameplay.SetAttr(GameplayAttr.Energy, currentEnergy);
             
             return true;
         }
@@ -160,10 +209,25 @@ namespace TSoft.InGame.Player
             
             cardsOnHand.Clear();
         }
+
+        public void RetrieveAllCards()
+        {
+            List<PokerCard> cards = new(cardsOnHand);
+            foreach (var cardOnHand in cards)
+            {
+                if(cardOnHand == null)
+                    continue;
+                
+                cardsOnDeck.Enqueue(cardOnHand.cardData);
+                
+                Discard(cardOnHand);
+            }
+            
+            cardsOnHand.Clear();
+        }
         
         private void RemoveCardFromHand(PokerCard pokerCard)
         {
-            currentPokerCardPreview = null;
             cardsOnHand.Remove(pokerCard);
             ArrangeHand(animationSpeed / 2f);
         }
@@ -183,35 +247,69 @@ namespace TSoft.InGame.Player
         private void ArrangeHand(float duration)
         {
             cardPositions = new Vector3[cardsOnHand.Count];
-            
-            var xSpacing = cardXSpacing;
-            var mid = cardsOnHand.Count / 2;
+            cardRotations = new Vector3[cardsOnHand.Count];
+            float xspace = cardXSpacing / 2;
+            float yspace = 0;
+            float angle = cardAngle;
+            int mid = cardsOnHand.Count / 2;
 
             if (cardsOnHand.Count % 2 == 1)
             {
-                cardPositions[mid] = new Vector3(0, cardYSpacing, 0);
-                
-                cardsOnHand[mid].PositionCard(0, cardY + cardYSpacing, duration);
-                
+                cardPositions[mid] = new Vector3(0, 0, 0);
+                cardRotations[mid] = new Vector3(0, 0, 0);
+
+                RelocateCard(cardsOnHand[mid], 0, 0, 0, duration);
                 mid++;
-                xSpacing = cardXSpacing;
+                xspace = cardXSpacing;
+                yspace = -cardYSpacing;
             }
 
-            for (var i = mid; i < cardsOnHand.Count; i++)
+            for (int i = mid; i < cardsOnHand.Count; i++)
             {
-                if (i == mid)
-                {
-                    xSpacing /= 2;
-                }
-                
-                cardPositions[i] = new Vector3(xSpacing, cardYSpacing, 0);
-                cardPositions[cardsOnHand.Count - i - 1] = new Vector3(-xSpacing, cardYSpacing, 0);
-           
-                cardsOnHand[i].PositionCard(xSpacing, cardY + cardYSpacing, duration);
-                cardsOnHand[cardsOnHand.Count - i - 1].PositionCard(-xSpacing,cardY + cardYSpacing, duration);
+                cardPositions[i] = new Vector3(xspace, yspace, 0);
+                cardRotations[i] = new Vector3(0, 0, -angle);
+                cardPositions[cardsOnHand.Count - i - 1] = new Vector3(-xspace, yspace, 0);
+                cardRotations[cardsOnHand.Count - i - 1] = new Vector3(0, 0, angle);
 
-                xSpacing += cardXSpacing;
+                RelocateCard(cardsOnHand[i], xspace, yspace, -angle, duration);
+                RelocateCard(cardsOnHand[cardsOnHand.Count - i - 1], -xspace, yspace, angle, duration);
+
+                xspace += cardXSpacing;
+                yspace -= cardYSpacing;
+                yspace *= 1.5f;
+                angle += cardAngle;
             }
         }
+        
+        private void RelocateCard(PokerCard card, float x, float y, float angle, float duration)
+        {
+            PositionCard(card, x, y, duration);
+            RotateCard(card, angle, duration);
+        }
+        
+        private void PositionCard(PokerCard card, float x, float y, float duration)
+        {
+            card.transform.TweenMove(new Vector3(x, cardY + y, 0), duration);
+        }
+        private void RotateCard(PokerCard card, float angle, float duration)
+        {
+            card.transform.TweenRotate(new Vector3(0, 0, angle), duration);
+        }
+        
+#if UNITY_EDITOR
+        void OnGUI()
+        {
+            var count = gameplay.Attributes.Count;
+            Rect rc = new Rect(400, 300, 400, 20);
+            GUI.Label(rc, $"Player Attribute");
+            rc.y += 25;
+        
+            for (var i = 0; i < count; i++)
+            {
+                GUI.Label(rc, $"{gameplay.Attributes[i].attrType} : {gameplay.Attributes[i].value.CurrentValue.Value}");
+                rc.y += 25;
+            }
+        }
+#endif
     }
 }

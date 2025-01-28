@@ -1,5 +1,6 @@
 using System;
 using Cysharp.Threading.Tasks;
+using TSoft.Data.Registry;
 using TSoft.Managers;
 using TSoft.Utils;
 using UnityEngine;
@@ -10,34 +11,26 @@ namespace TSoft.InGame
     public class InGameDirector : DirectorBase
     {
         public Action OnPrePlay;
-        public Action OnGameReady;
         
         //game play
         private PlayerController player;
         private CombatController combat;
         
         //life cycle
-        private ObservableVar<GameState> currentGameState;
         private ObservableVar<StageState> currentStageState;
         
         public PlayerController Player => player;
-        public FieldController CurrentField => combat.CurrentField;
-
-        public GameState CurrentGameState => currentGameState.Value;
+        public MonsterController CurrentMonster => combat.CurrentMonster;
+        
         public StageState CurrentStageState => currentStageState.Value;
 
         protected override void OnDirectorChanged(DirectorBase oldValue, DirectorBase newValue)
         {
-            //TODO 로드 타이밍 수정!!
-            //DataRegistry.instance.Load().Forget();
-            
             player = FindObjectOfType<PlayerController>();
             combat = FindObjectOfType<CombatController>();
-
-            currentGameState = new ObservableVar<GameState>();
+            
             currentStageState = new ObservableVar<StageState>();
             
-            currentGameState.OnValueChanged += (o, n) => OnGameStateChanged(o, n).Forget();
             currentStageState.OnValueChanged += (o, n) => OnStageStateChanged(o, n).Forget();;
             
             currentStageState.Value = StageState.Intro;
@@ -86,46 +79,9 @@ namespace TSoft.InGame
             combat.OnStageStateChanged(oldVal, newVal).Forget();
         }
         
-        private async UniTaskVoid OnGameStateChanged(GameState oldVal, GameState newVal)
-        {
-            if (oldVal == newVal)
-                return;
-
-            if (oldVal != GameState.None)
-            {
-                await UniTask.WaitUntil(() => combat.CurrentGameState == oldVal);
-                await UniTask.WaitUntil(() => player.CurrentGameState == oldVal);
-            }
-            
-            Debug.Log($"Current Game State [{newVal}]");
-            
-            switch (newVal)
-            {
-                case GameState.Ready:
-                    StartGameReady().Forget();
-                    break;
-                case GameState.Play:
-                    break;
-                case GameState.FinishSuccess:
-                    StartGameFinishSuccess().Forget();
-                    break;
-                case GameState.FinishFailed:
-                    StartGameFinishFailure().Forget();
-                    break;
-            }
-            
-            player.OnGameStateChanged(oldVal, newVal).Forget();
-            combat.OnGameStateChanged(oldVal, newVal).Forget();
-        }
-
         public void ChangeStageState(StageState stageState)
         {
             currentStageState.Value = stageState;
-        }
-        
-        public void ChangeGameState(GameState gameState)
-        {
-            currentGameState.Value = gameState;
         }
 
         public void GameOver(bool isSuccess)
@@ -134,26 +90,15 @@ namespace TSoft.InGame
 
             if (isSuccess)
             {
-                ChangeGameState(GameState.FinishSuccess);
+                ChangeStageState(StageState.PostPlayingSuccess);
             }else
             {
-                ChangeGameState(GameState.FinishFailed);
+                ChangeStageState(StageState.PostPlayingFailed);
             }
         }
 
         public void GameFinishSuccess()
         {
-            //TODO 리워드 씬/보스 완성 되면 그떄 max사용
-            //combat.CurrentCycleInfo.IsRoundMax
-            if (combat.CurrentCycleInfo.Round == 3)
-            {
-                ChangeStageState(StageState.PostPlayingSuccess);   
-            }
-            else
-            {
-                ChangeGameState(GameState.Ready);
-            }
-            
             PopupContainer.Instance.ClosePopupUI();
         }
 
@@ -175,7 +120,6 @@ namespace TSoft.InGame
             await UniTask.WaitForSeconds(1);
             
             ChangeStageState(StageState.Playing);
-            ChangeGameState(GameState.Ready);
         }
         
         //스테이지 마무리 준비 (성공)
@@ -183,47 +127,17 @@ namespace TSoft.InGame
         {
             await UniTask.WaitForSeconds(1);
             
-            ChangeStageState(StageState.PrePlaying);
+            PopupContainer.Instance.ShowPopupUI(PopupContainer.PopupType.Win);
         }
         
         //스테이지 마무리 준비 (실패)
         private async UniTaskVoid StartPostPlayingFailed()
         {
+            PopupContainer.Instance.ShowPopupUI(PopupContainer.PopupType.GameOver);
+            
             await UniTask.WaitForSeconds(1);
             
             ChangeStageState(StageState.Outro);
-        }
-
-        #endregion
-
-        #region Game
-
-        private async UniTaskVoid StartGameReady()
-        {
-            OnGameReady?.Invoke();
-            
-            await UniTask.WaitForSeconds(1);
-            
-            ChangeGameState(GameState.Play);
-        }
-
-        //스테이지 준비
-        private async UniTaskVoid StartGamePlay()
-        {
-            await UniTask.WaitForSeconds(1);
-        }
-        
-        private async UniTaskVoid StartGameFinishSuccess()
-        {
-            await UniTask.WaitForSeconds(1);
-            PopupContainer.Instance.ShowPopupUI(PopupContainer.PopupType.Win);
-        }
-        
-        private async UniTaskVoid StartGameFinishFailure()
-        {
-            await UniTask.WaitForSeconds(1);
-            
-            ChangeStageState(StageState.PostPlayingFailed);
         }
 
         #endregion

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using Sirenix.Utilities;
+using TSoft.Data.Card;
 using TSoft.InGame.CardSystem;
 using TSoft.InGame.GamePlaySystem;
 using TSoft.Utils;
@@ -12,46 +13,40 @@ namespace TSoft.InGame.Player
     {
         private Gameplay gameplay;
         
-        public List<SpecialCard> SpecialCards;
-        public ObservableList<SpecialCardData> CurrentSpecialCards;
+        public List<ArtifactSO> defaultArtifacts;
+        public ObservableList<ArtifactSO> currentArtifacts;
         
         private void Awake()
         {
             gameplay = GetComponent<Gameplay>();
 
-            CurrentSpecialCards = new();
-            CurrentSpecialCards.ListChanged += OnSpecialCardsChanged;
+            currentArtifacts = new();
+            currentArtifacts.ListChanged += OnArtifactsChanged;
         }
 
-        private void Start()
+        public void Init()
         {
-            if (!SpecialCards.IsNullOrEmpty())
+            if (!defaultArtifacts.IsNullOrEmpty())
             {
-                foreach (var card in SpecialCards)
+                foreach (var artifact in defaultArtifacts)
                 {
-                    if(card == null)
+                    if(artifact == null)
                         continue;
                     
-                    //gameplay.ApplyEffectSelf(card.cardData.Effect);
-                    CurrentSpecialCards.Add(card.cardData);
+                    currentArtifacts.Add(artifact);
                 }    
             }
-            
-            /*foreach (var specialCard in CurrentSpecialCards)
-            {
-                gameplay.ApplyEffectSelf(specialCard.Effect);
-            }*/
         }
 
-        private void OnSpecialCardsChanged(object sender, ListChangedEventArgs args)
+        private void OnArtifactsChanged(object sender, ListChangedEventArgs args)
         {
-            if(CurrentSpecialCards.Count < 1)
+            if(currentArtifacts.Count < 1)
                 return;
             
             switch (args.ListChangedType)
             {
                 case ListChangedType.ItemAdded :
-                    ApplyAbility(CurrentSpecialCards[args.NewIndex].Effect);
+                    ApplyAbility(currentArtifacts[args.NewIndex].effect);
                     break;
                 case ListChangedType.ItemDeleted :
                     break;

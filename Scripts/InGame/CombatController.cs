@@ -1,5 +1,7 @@
 using Cysharp.Threading.Tasks;
+using TSoft.Data.Monster;
 using TSoft.Data.Registry;
+using TSoft.UI.Views.InGame;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -7,69 +9,69 @@ namespace TSoft.InGame
 {
     public class CombatController : ControllerBase
     {
-        public struct CycleInfo
+      
+        //view
+        [SerializeField]
+        private BackgroundView bgView;
+        [SerializeField]
+        private FieldInfoView infoView;
+        
+        [SerializeField] private float gameFinishDuration;
+        
+        //monster
+        private MonsterController currentMonster;
+
+        public MonsterController CurrentMonster
         {
-            public int Round;
-            public int Stage;
-            public bool IsRoundMax => Round >= 5;
-            
-            public void Reset()
+            get => currentMonster;
+            set
             {
-                Round = 0;
-                Stage = 0;
+                if (value != null)
+                {
+                    infoView.OnMonsterSpawn?.Invoke(value);
+                    bgView.OnMonsterSpawn?.Invoke(value.Data.monsterType);
+                    
+                    value.GamePlay.GetAttrVar(GameplayAttr.Heart).OnValueChanged += (oldVal, newVal) =>
+                    {
+                        var maxHp = currentMonster.GamePlay.GetAttr(GameplayAttr.MaxHeart);
+                        infoView.OnDamaged?.Invoke(newVal, maxHp);
+                    };
+                    
+                    currentMonster = value;
+                }
             }
         }
-        
-        //field
-        private FieldController currentField;
-        //cycle
-        private CycleInfo currentCycleInfo;
-        
-        public FieldController CurrentField => currentField;
-        public CycleInfo CurrentCycleInfo => currentCycleInfo;
+
+        private MonsterDataSO monsterData;
 
         public UnityEvent onGameFinish;
         
         protected override void InitOnDirectorChanged()
         {
-            currentCycleInfo.Reset();
+#if UNITY_EDITOR
+            if (GameContext.Instance.CurrentNode == null || GameContext.Instance.CurrentNode.monsterId == null)
+            {
+                if (TsDevPreferences.MonsterId != null)
+                {
+                    if (DataRegistry.Instance.MonsterRegistry.TryGetValue(TsDevPreferences.MonsterId, out var defaultMonster))
+                    { 
+                        monsterData = defaultMonster;
+                    }    
+                }
+            }
+#endif
+            if (monsterData != null) 
+                return;
+            
+            if (DataRegistry.Instance.MonsterRegistry.TryGetValue(GameContext.Instance.CurrentNode.monsterId, out var monsterDataSo))
+            { 
+                monsterData = monsterDataSo;
+            }
         }
         
         protected override async UniTask OnPrePlay()
         {
-            currentCycleInfo.Round = 0;
-            currentCycleInfo.Stage++;
-
-            if (currentField != null)
-            {
-                Destroy(currentField.gameObject);
-            }
-            
-            currentField = DataRegistry.Instance.StageRegistry.SpawnNextStage(transform, currentCycleInfo.Stage);
-            currentField.SetFieldData(currentCycleInfo);
-            
-            await UniTask.WaitForSeconds(1);
-        }
-
-        protected override async UniTask OnGameReady()
-        {
-            if (currentCycleInfo.Round > 0)
-            {
-                onGameFinish?.Invoke();    
-            }
-            
-            await UniTask.WaitForSeconds(1);
-            
-            currentCycleInfo.Round++;
-            
-            var mIndex = currentCycleInfo.Round;
-            currentField.CurrentSlotIndex = mIndex;
-            
-            Debug.Log("current round" + currentCycleInfo.Round);
-        }
-        
-        protected override async UniTask OnGameFinishSuccess()
-        {
+            CurrentMonster = monsterData.SpawnMonster(transform, Vector3.zero);
             
             await UniTask.WaitForSeconds(1);
         }

@@ -1,3 +1,5 @@
+using System;
+
 namespace TSoft.InGame
 {
     public enum StageState
@@ -12,35 +14,49 @@ namespace TSoft.InGame
         Exit,               // 로비로 돌아간다.
     };
     
-    public enum GameState
-    {
-        None,
-        Ready,
-        Play,
-        FinishSuccess,
-        FinishFailed
-    };
-    
     public enum CardType
     {
         None,
         Diamond,
         Club,
         Spade,
-        Heart
+        Heart,
+        Joker
+    }
+
+    public enum CustomEffectPolicy
+    {
+        Instant,
+        PostApply
+    }
+    
+    [Flags]
+    public enum TargetFlag
+    {
+        Self = 1 << 0,
+        Monster = 1 << 1,
     }
 
     public enum CardPatternType
     {
-        StraightFlush,
-        FourOfKind,
-        FullHouse,
-        Flush,
-        Straight,
-        ThreeOfKind,
-        TwoPair,
+        None,
+        HighCard,
         OnePair,
-        HighCard
+        TwoPair,
+        ThreeOfKind,
+        Straight,
+        Flush,
+        FullHouse,
+        FourOfKind,
+        StraightFlush,
+    }
+    
+    public enum ModifierOpType
+    {
+        Add,
+        Multiply,
+        Divide,
+        Override,
     }
     
     public enum GameplayAttr

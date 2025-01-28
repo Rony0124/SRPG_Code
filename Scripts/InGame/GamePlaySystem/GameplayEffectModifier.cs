@@ -8,19 +8,11 @@ namespace TSoft.InGame.GamePlaySystem
     public class GameplayEffectModifier
     {
         public GameplayAttr attrType;
-                
-        public enum ModifierOpType
-        {
-            Add,
-            Multiply,
-            Divide,
-            Override,
-        }
         
         public ModifierOpType modifierOp;
         
         public float magnitude;
-
+       
         /*public struct Tags
         {
             public List<GameplayTag> mustHaveTag;
@@ -29,5 +21,13 @@ namespace TSoft.InGame.GamePlaySystem
 
         public Tags sourceTags;
         public Tags targetTags;*/
+    }
+    
+    [Serializable]
+    public class Modifier
+    {
+        public ModifierOpType modifierOp;
+        
+        public float magnitude;
     }
 }
